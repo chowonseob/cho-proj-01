@@ -1,0 +1,206 @@
+Machine Learning Project 1
+
+<Question #1>
+```{r}
+library(glmnet)
+
+DataOrig <- read.table("spambasedata-Orig.csv",sep=",",header=T,
+                       stringsAsFactors=F)
+
+load(file="SpamdataPermutation.RData")
+DataOrig <- DataOrig[ord,]
+
+# Doing a 60-40 split
+TrainInd <- ceiling(nrow(DataOrig)*0.6)
+TrainData <- DataOrig[1:TrainInd,]
+ValData <- DataOrig[(TrainInd+1):nrow(DataOrig),]
+
+# Set up Ridge
+XTrain <- model.matrix(IsSpam ~ .,TrainData)
+XVal <- model.matrix(IsSpam ~ .,ValData)
+
+YTrain <- TrainData$IsSpam
+YVal <- ValData$IsSpam
+#YTrain <- log(TrainData$SalePrice)
+#YVal <- log(ValData$SalePrice)
+
+grid <- 10^seq(2,by=-0.5,length.out=100)
+
+# Run Ridge Regression
+source("ROCPlot.r")
+Ridge.outR <- glmnet(XTrain,YTrain,family = "binomial", alpha=0,lambda=grid,thresh=1e-12)
+Ridge.YHat <- predict(Ridge.outR,newx=XVal)
+Ridge.AUC <- rep(NA,ncol(Ridge.YHat))
+for(i in 1:ncol(Ridge.YHat)) {
+  Ridge.AUC[i] <- ROCPlot(Ridge.YHat[,i],YVal,Plot=F)$AUC
+}
+
+max(Ridge.AUC)
+#0.9696739
+which.max(Ridge.AUC)
+#17
+plot(Ridge.AUC)
+
+```
+
+<Question #2>
+```{r}
+# Run Lasso Regression
+source("ROCPlot.r")
+Lasso.outR <- glmnet(XTrain,YTrain,family = "binomial", alpha=1,lambda=grid,thresh=1e-12)
+Lasso.YHat <- predict(Lasso.outR,newx=XVal)
+Lasso.AUC <- rep(NA,ncol(Lasso.YHat))
+for(i in 1:ncol(Lasso.YHat)) {
+  Lasso.AUC[i] <- ROCPlot(Lasso.YHat[,i],YVal,Plot=F)$AUC
+}
+
+max(Lasso.AUC)
+#0.9697423
+which.max(Lasso.AUC)
+#14
+plot(Lasso.AUC)
+
+```
+
+<Question #3>
+```{r}
+# Take an initial look into all the outcome summaries regarding the coefficients from the previous Lasso regression.
+summary(Lasso.outR)
+summary(Lasso.outR$beta)
+# 5227 non-zero entries in total.
+
+# Use the for-loops to obtain the number of nonzero coefficients of each lambda value.
+# First, create an empty list to contain the number of nonzero coefficients collected during the for loop.
+Lasso.nonzeros<-list() 
+
+# The main for-loops:
+for(i in 1:100){
+  Lasso.coef<-Lasso.outR$beta[,i]
+  n<-0
+  # This external for-loop will look through all coefficients over all 100 lambda values.
+  
+  for(j in 1:58){
+    if(Lasso.coef[j]!=0){
+      n<-n+1
+    } 
+  }
+  # Then this internal for-loop will go through each of the 57 variables + intercept coefficient, and count the number of only the nonzero 
+  # coefficients.
+  
+  Lasso.nonzeros<-c(Lasso.nonzeros, n)
+  # Make sure to record the number of nonzero coefficients (n value) collected during each of the for-loop of the 100 lambda values.
+}
+
+Lasso.nonzeros<-unlist(Lasso.nonzeros)
+
+# Lastly, plot the Lasso AUC against the number of nonzero coefficients of each lambda.
+plot(Lasso.nonzeros, Lasso.AUC)
+
+```
+
+<Question #4>
+```{r}
+table(Lasso.nonzeros)
+# Out of all 100 lambda values (which ranges from the starting value of 100, down to 3.162278e-48) there are 8 distinct numbers of 
+# counting the variables that have nonzero coefficients (0,6,25,31,43,48,53,56).
+# The graphic outcome from question #3 has 8 visually distinct points, plotted against the average AUC for each of the distinct counts 
+# of nonzero coefficients. The above graph is technically correct. 
+
+
+# A simple plot for briefly checking how the actual lambda value (grid) is correlated to the number of nonzero variables included.
+plot(grid, Lasso.nonzeros)
+# Clearly, as lambda (x-axis) decreases from 100 towards 3.162278e-48, more variables are included.
+# In other words, greater lambda value means less variables are included (more 'zero' coefficients).
+# This is exactly as it was expected, because greater lambda value essentially means greater penalization of all +/- coefficients to 
+# shrink towards 0.  
+
+# This time, count the nonzero coefficients for the Ridge regression.
+Ridge.nonzeros<-list() 
+
+# Utilize the for-loop-counter from question #3.
+for(i in 1:100){
+  Ridge.coef<-Ridge.outR$beta[,i]
+  n<-0
+  for(j in 1:58){
+    if(Ridge.coef[j]!=0){
+      n<-n+1
+    } 
+  }
+  Ridge.nonzeros<-c(Ridge.nonzeros, n)
+}
+Ridge.nonzeros<-unlist(Ridge.nonzeros)
+
+table(Ridge.nonzeros)
+plot(grid, Ridge.nonzeros)
+# In case of Ridge regression, all 100 lambda values returned the same count of 57 nonzero coefficients, meaning that there were 57 nonzero 
+# coefficients for all of the possible cases of lambda variation. 
+# This is also as expected, since it is known that the Ridge regression does not support the features selection (zeroing out the 
+# coefficients).
+
+```
+
+<Question #5>
+```{r}
+#Log-Likelihood Function
+
+LLfn <- function(PHat,YVal) {
+  tmp <- rep(NA,length(PHat))
+  tmp[YVal==1] <- log(PHat[YVal==1])
+  tmp[YVal==0] <- log(1-PHat[YVal==0])
+  sum(tmp)
+}
+
+
+# Run Ridge Regression w/ LLH
+source("ROCPlot.r")
+Ridge.outR <- glmnet(XTrain,YTrain,family = "binomial", alpha=0,lambda=grid,thresh=1e-12)
+Ridge.YHat <- LLfn(predict(Ridge.outR,newx=XVal,type = "response"),YVal)
+
+
+Ridge_LLH <- matrix(dimnames = list(c(),c("lambda","LLH")),ncol = 2)
+for(k in grid){
+  
+  Ridge.outR<- glmnet(XTrain,YTrain,family = "binomial", alpha=0,lambda=k,thresh=1e-12)
+  Ridge_LLH<- rbind(Ridge_LLH,c(k,LLfn(predict(Ridge.outR,newx=XVal,type = "response",s= k),YVal)))
+  
+  }
+
+plot(Ridge_LLH)
+
+```
+```{r}
+# Run Lasso Regression w/ LLH
+Lasso.outR <- glmnet(XTrain,YTrain,family = "binomial", alpha=1,lambda=grid,thresh=1e-12)
+Lasso.YHat <- LLfn(predict(Lasso.outR,newx=XVal),YVal)
+
+Lasso_LLH <- matrix(dimnames = list(c(),c("lambda","LLH")),ncol = 2)
+for(k in grid){
+  
+  Lasso.outR<- glmnet(XTrain,YTrain,family = "binomial", alpha=1,lambda=k,thresh=1e-12)
+  Lasso_LLH<- rbind(Lasso_LLH,c(k,LLfn(predict(Lasso.outR,newx=XVal,type = "response",s= k),YVal)))
+  
+  }
+plot(Lasso_LLH)
+
+# The plot shows that higher log-likelihood values tend to also have higher lambda values. 
+# It essentially means that higher penalty on the coefficients (higher lambda value) will have outcome of a higher log-likelihood value.
+
+```
+
+```{r}
+# Run Lasso Regression w/ LLH, get 
+Lasso.outR <- glmnet(XTrain,YTrain,family = "binomial", alpha=1,lambda=grid,thresh=1e-12)
+Lasso.YHat <- LLfn(predict(Lasso.outR,newx=XVal),YVal)
+Lasso_LLH <- matrix(dimnames = list(c(),c("Number of Variables","LLH")),ncol=2)
+
+for (k in grid) {
+      Lasso.outR<- glmnet(XTrain, YTrain,alpha=1, lambda=k, family="binomial",thresh=1e-12)
+      Lasso_LLH <- rbind( Lasso_LLH,c(sum(coef(Lasso.outR))>10^(-1),LLfn(predict(Lasso.outR,newx=XVal,type = "response",s= k),YVal)))
+    }
+
+plot(Lasso_LLH[,2],Lasso_LLH[,1])
+
+# The below plot suggests that there are four specific points where the AUC value appears to be near 1, and these points have relatively 
+# lower log-likelihood values, which means (according to the above plot) that the lambda value would also be lower, also implying that  
+# the penalty on the coefficients are lower thus having more variables included (more nonzero coefficients). 
+```
