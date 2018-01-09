@@ -1,2 +1,2 @@
-# cho-proj-01
-My first Github project
+ # cho-proj-01
+This is my first Github project repository.
